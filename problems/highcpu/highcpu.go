@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -65,9 +67,9 @@ func reproduce(dsn string) {
 	}
 	log.Println("  表 orders 创建完成（仅有 user_id、product_id 单列索引）")
 
-	// 批量 INSERT（每批 5000 行一条 SQL，远程执行快，约 30–60 秒完成）
-	log.Println("[真实数据] 插入 15 万条订单数据（每批 5000 行，批量 INSERT）...")
-	const totalRows = 150000
+	// 批量 INSERT（每批 5000 行，约 40–60 秒完成 30 万行，留出时间给并发查询）
+	log.Println("[真实数据] 插入 30 万条订单数据（每批 5000 行，批量 INSERT）...")
+	const totalRows = 300000
 	const batchSize = 5000
 	insertPrefix := "INSERT INTO orders (user_id, product_id, amount, status, create_time) VALUES "
 	for i := 0; i < totalRows; i += batchSize {
@@ -89,41 +91,54 @@ func reproduce(dsn string) {
 	}
 	log.Println("  数据插入完成")
 
-	// 执行需要全表扫描的聚合查询（缺复合索引 → type=ALL + Using filesort）
-	log.Println("[触发问题] 执行报表聚合查询（缺 (status, create_time) 复合索引，全表扫描约 15 万行）...")
+	// 并发执行全表扫描聚合查询，制造持续 CPU 负载（缺复合索引 → 每连接全表扫描）
+	log.Println("[触发问题] 8 个并发连接同时执行报表聚合（全表扫描 30 万行 + Filesort），观察 MySQL 服务器 CPU 上升...")
 	log.Println("  SQL: SELECT status, DATE(create_time), COUNT(*), SUM(amount) FROM orders WHERE create_time>='2024-01-01' GROUP BY status, DATE(create_time)")
-	const repeatQuery = 3
+	const workers = 8
+	const perWorker = 4
+	var done int32
 	start := time.Now()
-	for r := 0; r < repeatQuery; r++ {
-		var rows *sql.Rows
-		rows, err = db.Query(`
-			SELECT status, DATE(create_time) as day, COUNT(*) as cnt, SUM(amount) as total
-			FROM orders
-			WHERE create_time >= '2024-01-01'
-			GROUP BY status, DATE(create_time)
-			ORDER BY day DESC
-		`)
-		if err != nil {
-			log.Fatalf("查询失败: %v", err)
-		}
-		count := 0
-		for rows.Next() {
-			var status int
-			var day string
-			var cnt int
-			var total sql.NullFloat64
-			if err := rows.Scan(&status, &day, &cnt, &total); err != nil {
-				break
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			conn, errConn := sql.Open("mysql", dsn)
+			if errConn != nil {
+				log.Printf("  worker%d 连接失败: %v", workerID, errConn)
+				return
 			}
-			count++
-			if r == 0 && count <= 5 {
-				log.Printf("    结果: status=%d, day=%s, cnt=%d, total=%.2f", status, day, cnt, total.Float64)
+			defer conn.Close()
+			for i := 0; i < perWorker; i++ {
+				rows, qerr := conn.Query(`
+					SELECT status, DATE(create_time) as day, COUNT(*) as cnt, SUM(amount) as total
+					FROM orders WHERE create_time >= '2024-01-01'
+					GROUP BY status, DATE(create_time) ORDER BY day DESC
+				`)
+				if qerr != nil {
+					log.Printf("  worker%d 查询失败: %v", workerID, qerr)
+					return
+				}
+				n := 0
+				for rows.Next() {
+					var status int
+					var day string
+					var cnt int
+					var total sql.NullFloat64
+					rows.Scan(&status, &day, &cnt, &total)
+					n++
+				}
+				rows.Close()
+				atomic.AddInt32(&done, 1)
+				if workerID == 0 && i == 0 && n > 0 {
+					log.Printf("    单次查询返回 %d 行（各 worker 持续执行中...）", n)
+				}
 			}
-		}
-		rows.Close()
+		}(w)
 	}
+	wg.Wait()
 	elapsed := time.Since(start)
-	log.Printf("  查询完成（连续执行 %d 次模拟报表任务），总耗时 %v", repeatQuery, elapsed)
+	log.Printf("  查询完成（%d 并发 × %d 次 = %d 次全表扫描），总耗时 %v", workers, perWorker, atomic.LoadInt32(&done), elapsed)
 
 	// 监控 CPU/IO 状态
 	log.Println("[监控] 查看当前 MySQL 状态...")
@@ -134,7 +149,7 @@ func reproduce(dsn string) {
 	log.Printf("  Questions: %d, Threads_running: %d", qps, threadsRunning)
 
 	log.Print(`
-[结论] CPU/IO 飙高原因分析（15 万行 ≈ 真实业务数据量，可扩展到百万级观察更明显）：
+[结论] CPU/IO 飙高原因分析（并发全表扫描使 CPU 持续高位）：
 1. WHERE create_time 过滤 + GROUP BY status, DATE(create_time)，仅有 idx_user_id、idx_product_id
 2. 无法使用索引，全表扫描 + Filesort 排序
 3. CPU 用于聚合计算与排序，I/O 读取大量数据页
