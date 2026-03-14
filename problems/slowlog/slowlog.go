@@ -159,14 +159,21 @@ func view() {
 		}
 		defer rows.Close()
 		fmt.Println("=== mysql.slow_log 最近 50 条 ===")
+		count := 0
 		for rows.Next() {
 			var startTime, userHost, queryTime, lockTime, rowsSent, rowsExamined, db, sqlText sql.NullString
 			if rows.Scan(&startTime, &userHost, &queryTime, &lockTime, &rowsSent, &rowsExamined, &db, &sqlText) != nil {
 				continue
 			}
+			count++
 			fmt.Printf("\n--- %s | query_time=%s lock_time=%s rows=%s/%s | db=%s ---\n",
 				nullStr(startTime), nullStr(queryTime), nullStr(lockTime), nullStr(rowsSent), nullStr(rowsExamined), nullStr(db))
 			fmt.Println(nullStr(sqlText))
+		}
+		if count == 0 {
+			fmt.Println()
+			log.Println("当前无慢日志记录。请先执行「模拟慢查询」生成慢 SQL，或等待业务产生超过 long_query_time 的查询。")
+			fmt.Printf("long_query_time 阈值: 查询超过该秒数会写入慢日志。slow_query_log_file: %s\n", logFile)
 		}
 		return
 	}
