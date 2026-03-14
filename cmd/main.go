@@ -6,6 +6,7 @@ import (
 
 	"mysql-ops-learning/problems/conn"
 	"mysql-ops-learning/problems/deadlock"
+	"mysql-ops-learning/problems/failover"
 	"mysql-ops-learning/problems/highcpu"
 	"mysql-ops-learning/problems/indexmisuse"
 	"mysql-ops-learning/problems/largetable"
@@ -51,6 +52,8 @@ func main() {
 		replicationlag.Run(action)
 	case "09-cpu-io-high":
 		highcpu.Run(action)
+	case "10-failover":
+		failover.Run(action)
 	default:
 		fmt.Printf("Unknown problem: %s\n", problem)
 		printUsage()
@@ -71,6 +74,7 @@ Problems and actions:
   07-index-misuse      reproduce | explain
   08-replication-lag   reproduce | monitor | detect
   09-cpu-io-high       reproduce | explain | optimize
+  10-failover          reproduce | prepare | switch | verify
 
 Set MYSQL_DSN env (e.g. from .env): user:pass@tcp(host:3306)/dbname`)
 }
