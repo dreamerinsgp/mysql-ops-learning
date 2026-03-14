@@ -2,7 +2,7 @@
 
 ## Scenario
 
-Transaction A holds a row lock. Transaction B tries to update the same row and waits. If wait exceeds `innodb_lock_wait_timeout` (default 50s), B gets "Lock wait timeout exceeded".
+SaaS 平台：后台导出用户报表持锁 10 秒不提交，前台用户修改头像被阻塞，等待超 5 秒后报 Lock wait timeout exceeded。
 
 ## Reproduction
 
@@ -10,7 +10,7 @@ Transaction A holds a row lock. Transaction B tries to update the same row and w
 go run ./cmd run 06-lock-wait-timeout reproduce
 ```
 
-Spawns two connections: one holds a lock (BEGIN + UPDATE, no commit), the other tries to update the same row and blocks until timeout.
+Creates `users`, Conn1 持锁 10s，Conn2 模拟前台用户更新头像，等待超时。
 
 ## Solution
 

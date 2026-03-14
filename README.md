@@ -54,11 +54,38 @@ go run ./cmd run 07-index-misuse reproduce
 go run ./cmd run 07-index-misuse explain
 ```
 
+## Performance Dashboard Integration
+
+The Performance dashboard (DEX Ops Dashboard) can run these tools from its **MySQL Ops** tab:
+
+1. Save Infra config with your Aliyun MySQL (host, port, user, password, database)
+2. Ensure `mysql-ops-learning` is at `performance/../mysql-ops-learning` (sibling directory)
+3. Ensure Go is installed on the Performance server
+4. Open MySQL Ops tab, select problem + action, click Run
+
+The tools run on the Performance server and connect to your MySQL. Add the Performance server IP to your RDS whitelist.
+
+## CI / Testing
+
+GitHub Actions 在 push/PR 到 `mysql-ops-learning/` 时自动运行：
+
+- **build-and-test**：编译、单元测试（无需 MySQL）
+- **smoke-test**：MySQL 8.0 服务容器，对每个问题执行核心动作冒烟测试
+
+本地运行：
+
+```bash
+make build      # 编译
+make test       # 单元测试
+make smoke      # 冒烟测试（需 MYSQL_DSN）
+```
+
 ## Structure
 
 ```
 mysql-ops-learning/
 ├── cmd/main.go       # CLI entry, dispatches to problems
+├── scripts/smoke_test.sh  # 冒烟测试脚本
 ├── pkg/db/           # Shared DB connection
 └── problems/         # One package per problem (Go: no hyphens in import path)
     ├── conn/         # 01-max-connections

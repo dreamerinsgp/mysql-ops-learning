@@ -2,7 +2,7 @@
 
 ## Scenario
 
-Concurrent transactions acquire locks in different order, causing deadlock. MySQL detects and rolls back one transaction.
+钱包应用：用户 A 转给 B 100 元，同时用户 B 转给 A 50 元。两事务加锁顺序相反（A→B vs B→A），触发死锁。
 
 ## Reproduction
 
@@ -10,7 +10,7 @@ Concurrent transactions acquire locks in different order, causing deadlock. MySQ
 go run ./cmd run 05-deadlock reproduce
 ```
 
-Spawns two goroutines that update rows in different order (A then B vs B then A), triggering a deadlock.
+Creates `accounts`, two goroutines simulate A→B and B→A transfers with opposite lock order, triggering deadlock.
 
 ## Analyze
 

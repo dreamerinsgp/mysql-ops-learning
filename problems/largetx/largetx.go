@@ -24,6 +24,7 @@ func Run(action string) {
 	}
 }
 
+// reproduce 模拟业务场景：积分商城周年庆，运营批量给 1 万用户发积分，单事务内更新全部导致长时间持锁
 func reproduce() {
 	database, err := db.Open()
 	if err != nil {
@@ -31,57 +32,47 @@ func reproduce() {
 	}
 	defer database.Close()
 
-	// Create table
-	_, err = database.Exec(`DROP TABLE IF EXISTS _ops_learn_largetx`)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// 建表：用户积分表
+	_, _ = database.Exec(`DROP TABLE IF EXISTS user_points`)
 	_, err = database.Exec(`
-		CREATE TABLE _ops_learn_largetx (
-			id INT PRIMARY KEY AUTO_INCREMENT,
-			v INT NOT NULL,
+		CREATE TABLE user_points (
+			user_id BIGINT PRIMARY KEY,
+			points INT NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Created _ops_learn_largetx")
+	log.Println("[业务场景] 积分商城周年庆：运营批量给用户发 100 积分")
 
-	// Insert 10000 rows
-	log.Println("Inserting 10000 rows in one transaction...")
-	tx, err := database.Begin()
-	if err != nil {
-		log.Fatal(err)
+	// 插入 1 万用户
+	log.Println("插入 10000 个用户...")
+	tx, _ := database.Begin()
+	for i := 1; i <= 10000; i++ {
+		tx.Exec("INSERT INTO user_points (user_id, points) VALUES (?, 0)", i)
 	}
-	for i := 0; i < 10000; i++ {
-		_, err = tx.Exec("INSERT INTO _ops_learn_largetx (v) VALUES (?)", i)
-		if err != nil {
-			tx.Rollback()
-			log.Fatal(err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		log.Fatal(err)
-	}
-	log.Println("Insert done. Now updating all 10000 rows in ONE transaction (simulates bad pattern)...")
+	tx.Commit()
+	log.Println("插入完成。模拟错误写法：单事务内更新全部用户积分（持锁数分钟，阻塞用户登录、下单、查余额）...")
+
 	tx, err = database.Begin()
 	if err != nil {
 		log.Fatal(err)
 	}
-	res, err := tx.Exec("UPDATE _ops_learn_largetx SET v = v + 1")
+	res, err := tx.Exec("UPDATE user_points SET points = points + 100")
 	if err != nil {
 		tx.Rollback()
 		log.Fatal(err)
 	}
 	n, _ := res.RowsAffected()
-	log.Printf("Updated %d rows. Committing...", n)
+	log.Printf("已更新 %d 行。提交中...", n)
 	if err := tx.Commit(); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Done. Large transaction completed.")
+	log.Println("完毕。应拆分为小批次（每批 500~1000 行提交一次），避免长事务持锁。")
 }
 
+// detect 查询 INNODB_TRX，定位持有锁的长事务（如批量发积分的脚本）
 func detect() {
 	database, err := db.Open()
 	if err != nil {

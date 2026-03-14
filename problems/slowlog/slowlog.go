@@ -24,6 +24,7 @@ func Run(action string) {
 	}
 }
 
+// reproduce 模拟业务场景：O2O 用户按手机号搜索历史订单，因 phone 无索引导致全表扫描变慢
 func reproduce() {
 	database, err := db.Open()
 	if err != nil {
@@ -31,12 +32,45 @@ func reproduce() {
 	}
 	defer database.Close()
 
-	log.Println("Running slow query: SELECT SLEEP(5)...")
-	_, err = database.Exec("SELECT SLEEP(5)")
+	// 建表：模拟订单表（无 phone 索引时搜索会全表扫描）
+	_, _ = database.Exec("DROP TABLE IF EXISTS _biz_orders_search")
+	_, err = database.Exec(`
+		CREATE TABLE _biz_orders_search (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			order_no VARCHAR(32) NOT NULL,
+			user_phone VARCHAR(20) NOT NULL,
+			amount DECIMAL(10,2),
+			status TINYINT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Done. If slow_query_log is ON and long_query_time <= 5, this should appear in slow log.")
+
+	// 插入约 15 万行，模拟多用户历史订单
+	log.Println("[业务场景] 用户在「我的订单」按手机号搜索，接口执行以下 SQL（phone 无索引 → 全表扫描）")
+	log.Println("  SELECT * FROM _biz_orders_search WHERE user_phone='13800138000' ORDER BY created_at DESC LIMIT 20")
+	const batch = 5000
+	targetPhone := "13800138000"
+	for i := 0; i < 150000; i += batch {
+		tx, _ := database.Begin()
+		for j := 0; j < batch && i+j < 150000; j++ {
+			phone := fmt.Sprintf("138%08d", (i+j)%100000)
+			tx.Exec("INSERT INTO _biz_orders_search (order_no, user_phone, amount, status) VALUES (?, ?, ?, ?)",
+				fmt.Sprintf("ORD%010d", i+j), phone, 99.9, 1)
+		}
+		tx.Commit()
+	}
+	// 插入目标用户的部分订单，使搜索有结果
+	database.Exec("INSERT INTO _biz_orders_search (order_no, user_phone, amount, status) VALUES ('ORD13800138000', ?, 199, 1)", targetPhone)
+	log.Println("已插入 150000 行。执行慢查询...")
+
+	_, err = database.Exec("SELECT * FROM _biz_orders_search WHERE user_phone = ? ORDER BY created_at DESC LIMIT 20", targetPhone)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("完毕。若 slow_query_log=ON 且 long_query_time<=2，该查询应出现在慢日志中。")
 }
 
 func enable() {

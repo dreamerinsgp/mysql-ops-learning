@@ -10,7 +10,7 @@ Table grows too large. Full table scans, DDL (ALTER) takes forever or locks the 
 go run ./cmd run 04-large-table reproduce
 ```
 
-Creates table `_ops_learn_largetable` and inserts 100000 rows. Simulates a table that has grown large.
+Creates `orders` (订单表) and inserts 100000 rows. Simulates 电商运营一年后订单表增长，ALTER 加字段会长时间锁表。
 
 ## Analyze
 

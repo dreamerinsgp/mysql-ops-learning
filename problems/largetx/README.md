@@ -2,7 +2,7 @@
 
 ## Scenario
 
-A single transaction updates/inserts too many rows. It holds locks for a long time, blocks other queries, and can cause replication lag and undo log bloat.
+积分商城周年庆：运营批量给 10 万用户发积分，单事务内更新全部，持锁数分钟，阻塞用户登录、下单、查余额。
 
 ## Reproduction
 
@@ -10,7 +10,7 @@ A single transaction updates/inserts too many rows. It holds locks for a long ti
 go run ./cmd run 03-large-transaction reproduce
 ```
 
-Creates table `_ops_learn_largetx` and runs a single transaction that updates 10000 rows. Simulates bad batch pattern.
+Creates `user_points` (积分表) and runs a single transaction updating 10000 rows—simulates 运营批量发积分导致长事务持锁.
 
 ## Detect
 

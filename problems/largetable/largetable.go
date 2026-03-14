@@ -24,6 +24,7 @@ func Run(action string) {
 	}
 }
 
+// reproduce 模拟业务场景：电商订单表随业务增长至 10 万行，后续 ALTER 加字段会长时间锁表
 func reproduce() {
 	database, err := db.Open()
 	if err != nil {
@@ -31,34 +32,38 @@ func reproduce() {
 	}
 	defer database.Close()
 
-	_, _ = database.Exec("DROP TABLE IF EXISTS _ops_learn_largetable")
+	_, _ = database.Exec("DROP TABLE IF EXISTS orders")
 	_, err = database.Exec(`
-		CREATE TABLE _ops_learn_largetable (
+		CREATE TABLE orders (
 			id BIGINT PRIMARY KEY AUTO_INCREMENT,
-			data VARCHAR(100),
+			user_id BIGINT NOT NULL,
+			amount DECIMAL(10,2) NOT NULL,
+			status TINYINT DEFAULT 1,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Created _ops_learn_largetable. Inserting 100000 rows...")
+	log.Println("[业务场景] 电商订单表 orders，模拟运营一年后数据量增长...")
+	log.Println("插入 100000 行订单（实际可能达千万级，ALTER ADD COLUMN 会锁表数小时）")
 
-	// Batch insert
 	const batch = 5000
 	for i := 0; i < 100000; i += batch {
 		tx, _ := database.Begin()
 		for j := 0; j < batch && i+j < 100000; j++ {
-			tx.Exec("INSERT INTO _ops_learn_largetable (data) VALUES (?)", fmt.Sprintf("row_%d", i+j))
+			tx.Exec("INSERT INTO orders (user_id, amount, status) VALUES (?, ?, ?)",
+				(i+j)%10000, 99.9+float64(j%100), 1)
 		}
 		tx.Commit()
 		if (i/batch)%5 == 0 {
-			log.Printf("  Inserted %d rows", i+batch)
+			log.Printf("  已插入 %d 行", i+batch)
 		}
 	}
-	log.Println("Done. 100000 rows inserted.")
+	log.Println("完毕。大表 ALTER 需考虑在线 DDL 或 pt-osc，避免停服。")
 }
 
+// analyze 查询 information_schema.TABLES，查看各表数据量、索引占用（如 orders 表体积）
 func analyze() {
 	database, err := db.Open()
 	if err != nil {

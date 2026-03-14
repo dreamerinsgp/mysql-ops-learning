@@ -10,7 +10,7 @@ Query does full table scan because there is no index or wrong index is used. EXP
 go run ./cmd run 07-index-misuse reproduce
 ```
 
-Creates table `_ops_learn_index` with data, no index on filtered column. Runs a query that triggers full scan.
+Creates `orders` (外卖订单表)，phone 列无索引。用户按手机号查订单触发全表扫描，接口超时。
 
 ## Explain
 

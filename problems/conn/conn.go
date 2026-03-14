@@ -26,31 +26,32 @@ func Run(action string) {
 	}
 }
 
+// reproduce 模拟业务场景：电商秒杀时，每个请求新建连接且不归还连接池，直至耗尽
 func reproduce(dsn string) {
 	var conns []*sql.DB
-	log.Println("Opening connections until limit...")
+	log.Println("[业务场景] 模拟大促秒杀：每个请求新建 MySQL 连接且未归还，直至达到 max_connections 上限...")
 	for i := 0; ; i++ {
 		c, err := sql.Open("mysql", dsn)
 		if err != nil {
-			log.Printf("Failed after %d connections: %v", len(conns), err)
+			log.Printf("达到上限：在 %d 个连接后新建失败: %v（模拟用户看到「Too many connections」）", len(conns), err)
 			break
 		}
-		c.SetMaxOpenConns(1) // each pool = 1 connection to exhaust limit
+		c.SetMaxOpenConns(1) // 每个连接池仅1连接，模拟「每请求一连接」
 		if err := c.Ping(); err != nil {
-			log.Printf("Ping failed after %d connections: %v", len(conns), err)
+			log.Printf("Ping 失败（连接数已满）: %v", err)
 			c.Close()
 			break
 		}
 		conns = append(conns, c)
 		if i%10 == 0 && i > 0 {
-			log.Printf("  %d connections open", len(conns))
+			log.Printf("  已建立 %d 个连接（模拟持续涌入的秒杀请求）", len(conns))
 		}
 	}
-	log.Printf("Total: %d connections. Cleaning up...", len(conns))
+	log.Printf("共耗尽 %d 个连接。清理中...", len(conns))
 	for _, c := range conns {
 		c.Close()
 	}
-	log.Println("Done. All connections closed.")
+	log.Println("完毕。所有连接已关闭。结论：应使用连接池，避免每请求一连接。")
 }
 
 func monitor() {
