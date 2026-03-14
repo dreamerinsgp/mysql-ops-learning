@@ -136,7 +136,7 @@ func reproduce(dsn string) {
 	db.QueryRow("SHOW GLOBAL STATUS LIKE 'Threads_running'").Scan(&varName, &threadsRunning)
 	log.Printf("  Questions: %d, Threads_running: %d", qps, threadsRunning)
 
-	log.Println(`
+	log.Print(`
 [结论] CPU/IO 飙高原因分析：
 1. WHERE 条件使用 create_time 字段过滤，但仅有单列索引 idx_user_id、idx_product_id
 2. GROUP BY status, DATE(create_time) 需要对大量行排序，触发 Filesort
@@ -203,7 +203,7 @@ func explainQuery(dsn string) {
 		fmt.Println()
 	}
 
-	log.Println(`
+	log.Print(`
 [解读]
 - type: ALL 表示全表扫描（最差）
 - rows: 扫描的行数（很大）
@@ -281,7 +281,7 @@ func optimize(dsn string) {
 		}
 	}
 
-	log.Println(`
+	log.Print(`
 [优化效果]
 - 添加复合索引后，MySQL 使用索引范围扫描
 - 避免全表扫描，CPU 和 I/O 大幅下降
