@@ -6,10 +6,12 @@ import (
 
 	"mysql-ops-learning/problems/conn"
 	"mysql-ops-learning/problems/deadlock"
+	"mysql-ops-learning/problems/highcpu"
 	"mysql-ops-learning/problems/indexmisuse"
 	"mysql-ops-learning/problems/largetable"
 	"mysql-ops-learning/problems/largetx"
 	"mysql-ops-learning/problems/lockwait"
+	"mysql-ops-learning/problems/replicationlag"
 	"mysql-ops-learning/problems/slowlog"
 )
 
@@ -45,6 +47,10 @@ func main() {
 		lockwait.Run(action)
 	case "07-index-misuse":
 		indexmisuse.Run(action)
+	case "08-replication-lag":
+		replicationlag.Run(action)
+	case "09-cpu-io-high":
+		highcpu.Run(action)
 	default:
 		fmt.Printf("Unknown problem: %s\n", problem)
 		printUsage()
@@ -63,6 +69,8 @@ Problems and actions:
   05-deadlock          reproduce | analyze
   06-lock-wait-timeout reproduce
   07-index-misuse      reproduce | explain
+  08-replication-lag   reproduce | monitor | detect
+  09-cpu-io-high       reproduce | explain | optimize
 
 Set MYSQL_DSN env (e.g. from .env): user:pass@tcp(host:3306)/dbname`)
 }
