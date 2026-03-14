@@ -5,8 +5,11 @@ import (
 	"os"
 
 	"mysql-ops-learning/problems/conn"
+	"mysql-ops-learning/problems/deadlock"
+	"mysql-ops-learning/problems/indexmisuse"
 	"mysql-ops-learning/problems/largetable"
 	"mysql-ops-learning/problems/largetx"
+	"mysql-ops-learning/problems/lockwait"
 	"mysql-ops-learning/problems/slowlog"
 )
 
@@ -36,6 +39,12 @@ func main() {
 		largetx.Run(action)
 	case "04-large-table":
 		largetable.Run(action)
+	case "05-deadlock":
+		deadlock.Run(action)
+	case "06-lock-wait-timeout":
+		lockwait.Run(action)
+	case "07-index-misuse":
+		indexmisuse.Run(action)
 	default:
 		fmt.Printf("Unknown problem: %s\n", problem)
 		printUsage()
@@ -47,10 +56,13 @@ func printUsage() {
 	fmt.Println(`Usage: go run ./cmd run <problem> [action]
 
 Problems and actions:
-  01-max-connections  reproduce | monitor
-  02-slow-log         reproduce | enable
+  01-max-connections   reproduce | monitor
+  02-slow-log          reproduce | enable
   03-large-transaction reproduce | detect
-  04-large-table      reproduce | analyze
+  04-large-table       reproduce | analyze
+  05-deadlock          reproduce | analyze
+  06-lock-wait-timeout reproduce
+  07-index-misuse      reproduce | explain
 
 Set MYSQL_DSN env (e.g. from .env): user:pass@tcp(host:3306)/dbname`)
 }

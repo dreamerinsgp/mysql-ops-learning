@@ -23,6 +23,9 @@ A Go-based project for learning common MySQL operations issues. Each problem is 
 | `problem/02-slow-log` | Slow query log monitoring |
 | `problem/03-large-transaction` | Large transaction |
 | `problem/04-large-table` | Large table issues |
+| `problem/05-deadlock` | Deadlock |
+| `problem/06-lock-wait-timeout` | Lock wait timeout |
+| `problem/07-index-misuse` | Index misuse |
 
 ## Usage
 
@@ -42,6 +45,13 @@ go run ./cmd run 03-large-transaction detect
 # Large table: reproduce, or analyze table sizes
 go run ./cmd run 04-large-table reproduce
 go run ./cmd run 04-large-table analyze
+
+# Deadlock, lock wait, index misuse
+go run ./cmd run 05-deadlock reproduce
+go run ./cmd run 05-deadlock analyze
+go run ./cmd run 06-lock-wait-timeout reproduce
+go run ./cmd run 07-index-misuse reproduce
+go run ./cmd run 07-index-misuse explain
 ```
 
 ## Structure
@@ -50,9 +60,12 @@ go run ./cmd run 04-large-table analyze
 mysql-ops-learning/
 ├── cmd/main.go       # CLI entry, dispatches to problems
 ├── pkg/db/           # Shared DB connection
-└── problems/         # One dir per problem
-    ├── 01-max-connections/
-    ├── 02-slow-log/
-    ├── 03-large-transaction/
-    └── 04-large-table/
+└── problems/         # One package per problem (Go: no hyphens in import path)
+    ├── conn/         # 01-max-connections
+    ├── slowlog/      # 02-slow-log
+    ├── largetx/      # 03-large-transaction
+    ├── largetable/   # 04-large-table
+    ├── deadlock/     # 05-deadlock
+    ├── lockwait/     # 06-lock-wait-timeout
+    └── indexmisuse/  # 07-index-misuse
 ```
