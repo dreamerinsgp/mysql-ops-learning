@@ -48,23 +48,27 @@ func reproduce() {
 		log.Fatal(err)
 	}
 
-	// 插入约 15 万行，模拟多用户历史订单
+	// 插入约 3 万行（控制耗时 <30s，仍足以触发慢日志）
 	log.Println("[业务场景] 用户在「我的订单」按手机号搜索，接口执行以下 SQL（phone 无索引 → 全表扫描）")
 	log.Println("  SELECT * FROM _biz_orders_search WHERE user_phone='13800138000' ORDER BY created_at DESC LIMIT 20")
+	const totalRows = 30000
 	const batch = 5000
 	targetPhone := "13800138000"
-	for i := 0; i < 150000; i += batch {
+	for i := 0; i < totalRows; i += batch {
 		tx, _ := database.Begin()
-		for j := 0; j < batch && i+j < 150000; j++ {
+		for j := 0; j < batch && i+j < totalRows; j++ {
 			phone := fmt.Sprintf("138%08d", (i+j)%100000)
 			tx.Exec("INSERT INTO _biz_orders_search (order_no, user_phone, amount, status) VALUES (?, ?, ?, ?)",
 				fmt.Sprintf("ORD%010d", i+j), phone, 99.9, 1)
 		}
 		tx.Commit()
+		if (i+batch)%10000 == 0 || i+batch >= totalRows {
+			log.Printf("  已插入 %d 行...", min(i+batch, totalRows))
+		}
 	}
-	// 插入目标用户的部分订单，使搜索有结果
-	database.Exec("INSERT INTO _biz_orders_search (order_no, user_phone, amount, status) VALUES ('ORD13800138000', ?, 199, 1)", targetPhone)
-	log.Println("已插入 150000 行。执行慢查询...")
+	database.Exec("INSERT INTO _biz_orders_search (order_no, user_phone, amount, status) VALUES (?, ?, ?, ?)",
+		"ORD13800138000", targetPhone, 199, 1)
+	log.Printf("已插入 %d 行。执行慢查询...", totalRows+1)
 
 	_, err = database.Exec("SELECT * FROM _biz_orders_search WHERE user_phone = ? ORDER BY created_at DESC LIMIT 20", targetPhone)
 	if err != nil {
@@ -80,20 +84,29 @@ func enable() {
 	}
 	defer database.Close()
 
-	_, err = database.Exec("SET GLOBAL slow_query_log = 'ON'")
-	if err != nil {
-		log.Printf("Warning: SET GLOBAL slow_query_log failed (may need SUPER): %v", err)
+	// 尝试 SET GLOBAL，云 RDS / 受限账户通常无 SUPER 权限
+	setFailed := false
+	if _, err := database.Exec("SET GLOBAL slow_query_log = 'ON'"); err != nil {
+		setFailed = true
+		log.Printf("SET GLOBAL slow_query_log 失败: %v", err)
 	} else {
 		log.Println("slow_query_log = ON")
 	}
-	_, err = database.Exec("SET GLOBAL long_query_time = 2")
-	if err != nil {
-		log.Printf("Warning: SET GLOBAL long_query_time failed: %v", err)
+	if _, err := database.Exec("SET GLOBAL long_query_time = 2"); err != nil {
+		setFailed = true
+		log.Printf("SET GLOBAL long_query_time 失败: %v", err)
 	} else {
 		log.Println("long_query_time = 2 seconds")
 	}
+	if setFailed {
+		fmt.Println()
+		log.Println("提示：当前账户无 SUPER/SYSTEM_VARIABLES_ADMIN 权限，无法 SET GLOBAL。")
+		log.Println("云 RDS（阿里云/腾讯云/AWS 等）需在控制台修改参数组，或联系 DBA 用高权限账号设置。")
+		log.Println("若 slow_query_log 已为 ON，可直接分析慢日志文件。")
+		fmt.Println()
+	}
 
-	// Show current values
+	// 显示当前配置（SHOW 通常可读）
 	var name, val string
 	row := database.QueryRow("SHOW GLOBAL VARIABLES LIKE 'slow_query_log'")
 	if err := row.Scan(&name, &val); err == nil {
