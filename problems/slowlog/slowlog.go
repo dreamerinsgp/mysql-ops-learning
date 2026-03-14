@@ -78,7 +78,13 @@ func reproduce() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("完毕。若 slow_query_log=ON 且 long_query_time<=2，该查询应出现在慢日志中。")
+	// 执行 SELECT SLEEP(3) 确保至少有一条慢查询被记录（不受数据量、IO 影响）
+	log.Println("执行 SELECT SLEEP(3) 以触发慢日志（耗时 3 秒）...")
+	_, err = database.Exec("SELECT SLEEP(3)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("完毕。若 slow_query_log=ON 且 long_query_time<=3，慢日志中应有记录。")
 }
 
 func enable() {
