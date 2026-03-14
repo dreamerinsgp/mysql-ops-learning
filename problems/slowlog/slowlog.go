@@ -1,14 +1,16 @@
 package slowlog
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"mysql-ops-learning/pkg/db"
 )
 
-// Run executes the slow-log problem tool: reproduce or enable
+// Run executes the slow-log problem tool: reproduce, enable, or view
 func Run(action string) {
 	if os.Getenv("MYSQL_DSN") == "" {
 		log.Fatal("MYSQL_DSN not set")
@@ -19,8 +21,10 @@ func Run(action string) {
 		reproduce()
 	case "enable":
 		enable()
+	case "view":
+		view()
 	default:
-		log.Fatalf("Unknown action: %s (use reproduce or enable)", action)
+		log.Fatalf("Unknown action: %s (use reproduce, enable, or view)", action)
 	}
 }
 
@@ -120,4 +124,76 @@ func enable() {
 	if err := row.Scan(&name, &val); err == nil {
 		fmt.Printf("slow_query_log_file: %s\n", val)
 	}
+}
+
+// view 查看慢日志：优先从 mysql.slow_log 表读取（log_output=TABLE），否则尝试读文件或输出路径
+func view() {
+	database, err := db.Open()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer database.Close()
+
+	var logOutput, logFile string
+	var n, v string
+	if database.QueryRow("SHOW GLOBAL VARIABLES LIKE 'log_output'").Scan(&n, &v) == nil {
+		logOutput = v
+	}
+	if database.QueryRow("SHOW GLOBAL VARIABLES LIKE 'slow_query_log_file'").Scan(&n, &v) == nil {
+		logFile = v
+	}
+
+	// log_output 可为 TABLE, FILE, 或 TABLE,FILE
+	if strings.Contains(strings.ToUpper(logOutput), "TABLE") {
+		rows, err := database.Query(`
+			SELECT start_time, user_host, query_time, lock_time, rows_sent, rows_examined, db, LEFT(sql_text, 500) as sql_text
+			FROM mysql.slow_log
+			ORDER BY start_time DESC
+			LIMIT 50
+		`)
+		if err != nil {
+			log.Printf("查询 mysql.slow_log 失败（可能未启用 TABLE 输出）: %v", err)
+			fmt.Printf("\n慢日志文件路径: %s\n", logFile)
+			log.Println("请在 MySQL 服务器上执行: tail -100 " + logFile)
+			return
+		}
+		defer rows.Close()
+		fmt.Println("=== mysql.slow_log 最近 50 条 ===")
+		for rows.Next() {
+			var startTime, userHost, queryTime, lockTime, rowsSent, rowsExamined, db, sqlText sql.NullString
+			if rows.Scan(&startTime, &userHost, &queryTime, &lockTime, &rowsSent, &rowsExamined, &db, &sqlText) != nil {
+				continue
+			}
+			fmt.Printf("\n--- %s | query_time=%s lock_time=%s rows=%s/%s | db=%s ---\n",
+				nullStr(startTime), nullStr(queryTime), nullStr(lockTime), nullStr(rowsSent), nullStr(rowsExamined), nullStr(db))
+			fmt.Println(nullStr(sqlText))
+		}
+		return
+	}
+
+	// FILE 模式：尝试在本机读取（仅当 MySQL 与应用同机时可行）
+	if logFile != "" {
+		if data, err := os.ReadFile(logFile); err == nil {
+			lines := strings.Split(string(data), "\n")
+			n := len(lines)
+			if n > 100 {
+				lines = lines[n-100:]
+			}
+			fmt.Println("=== slow_query_log_file 末尾内容 ===")
+			fmt.Println(strings.Join(lines, "\n"))
+			return
+		}
+		fmt.Printf("慢日志文件路径: %s\n", logFile)
+		log.Println("无法直接读取（MySQL 可能在其他主机）。请在 MySQL 服务器上执行:")
+		fmt.Printf("  tail -100 %s\n", logFile)
+	} else {
+		log.Println("slow_query_log_file 为空，请先开启慢日志。")
+	}
+}
+
+func nullStr(s sql.NullString) string {
+	if s.Valid {
+		return s.String
+	}
+	return ""
 }

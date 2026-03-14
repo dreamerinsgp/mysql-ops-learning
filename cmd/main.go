@@ -57,7 +57,7 @@ func printUsage() {
 
 Problems and actions:
   01-max-connections   reproduce | monitor
-  02-slow-log          reproduce | enable
+  02-slow-log          reproduce | enable | view
   03-large-transaction reproduce | detect
   04-large-table       reproduce | analyze
   05-deadlock          reproduce | analyze

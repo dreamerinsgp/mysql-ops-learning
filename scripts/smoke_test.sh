@@ -29,8 +29,9 @@ echo "Starting smoke tests..."
 # 01: monitor 只读状态，不耗连接
 run "01-max-connections" "monitor"
 
-# 02: enable 设置慢日志
+# 02: enable 设置慢日志，view 查看慢日志
 run "02-slow-log" "enable"
+run "02-slow-log" "view"
 
 # 03: 先 reproduce 创建表，再 detect
 run "03-large-transaction" "reproduce"
