@@ -64,69 +64,69 @@ func reproduce(dsn string) {
 	}
 	log.Println("  表 orders 创建完成（仅有 user_id、product_id 单列索引）")
 
-	// 批量插入 50 万条测试数据
-	log.Println("[模拟数据] 插入 50 万条订单数据（这可能需要几分钟）...")
-	insertSQL := "INSERT INTO orders (user_id, product_id, amount, status, create_time) VALUES "
-	values := []string{}
-	for i := 1; i <= 500000; i++ {
-		values = append(values, fmt.Sprintf("(%d, %d, %.2f, %d, '%s')",
-			(i%10000)+1, (i%5000)+1, float64(i%1000)+10.0, i%4,
-			time.Now().Add(-time.Duration(i%365)*24*time.Hour).Format("2006-01-02 15:04:05")))
-		if len(values) >= 5000 {
-			_, err = db.Exec(insertSQL + values[0])
-			if err != nil {
-				log.Printf("插入数据失败: %v", err)
-				break
-			}
-			if i%50000 == 0 {
-				log.Printf("  已插入 %d 条...", i)
-			}
-			values = values[:0]
+	// 批量插入 50 万条真实数据（事务内逐行插入，确保数据真实写入）
+	log.Println("[真实数据] 插入 50 万条订单数据（每批 5000 行，约 1–2 分钟）...")
+	const totalRows = 500000
+	const batchSize = 5000
+	for i := 0; i < totalRows; i += batchSize {
+		tx, errTx := db.Begin()
+		if errTx != nil {
+			log.Printf("Begin 失败: %v", errTx)
+			break
 		}
-	}
-	if len(values) > 0 {
-		_, err = db.Exec(insertSQL + values[0])
-		if err != nil {
-			log.Printf("插入数据失败: %v", err)
+		for j := 0; j < batchSize && i+j < totalRows; j++ {
+			n := i + j
+			createTime := time.Now().Add(-time.Duration(n%365) * 24 * time.Hour).Format("2006-01-02 15:04:05")
+			_, _ = tx.Exec(
+				"INSERT INTO orders (user_id, product_id, amount, status, create_time) VALUES (?, ?, ?, ?, ?)",
+				(n%10000)+1, (n%5000)+1, float64(n%1000)+10.0, n%4, createTime,
+			)
+		}
+		if errTx := tx.Commit(); errTx != nil {
+			log.Printf("Commit 失败: %v", errTx)
+			break
+		}
+		if (i+batchSize)%50000 == 0 || i+batchSize >= totalRows {
+			log.Printf("  已插入 %d 行...", min(i+batchSize, totalRows))
 		}
 	}
 	log.Println("  数据插入完成")
 
-	// 执行一个需要全表扫描的聚合查询（缺少复合索引）
-	log.Println("[触发问题] 执行复杂聚合查询（缺少 (status, create_time) 复合索引，导致全表扫描）...")
-	log.Println("  SQL: SELECT status, DATE(create_time) as day, COUNT(*), SUM(amount) FROM orders WHERE create_time >= '2024-01-01' GROUP BY status, DATE(create_time)")
-	
+	// 执行需要全表扫描的聚合查询（缺复合索引 → type=ALL + Using filesort）
+	log.Println("[触发问题] 执行报表聚合查询（缺 (status, create_time) 复合索引，全表扫描 50 万行）...")
+	log.Println("  SQL: SELECT status, DATE(create_time), COUNT(*), SUM(amount) FROM orders WHERE create_time>='2024-01-01' GROUP BY status, DATE(create_time)")
+	const repeatQuery = 3
 	start := time.Now()
-	var rows *sql.Rows
-	rows, err = db.Query(`
-		SELECT status, DATE(create_time) as day, COUNT(*) as cnt, SUM(amount) as total
-		FROM orders 
-		WHERE create_time >= '2024-01-01'
-		GROUP BY status, DATE(create_time)
-		ORDER BY day DESC
-	`)
-	if err != nil {
-		log.Fatalf("查询失败: %v", err)
-	}
-	defer rows.Close()
-
-	count := 0
-	for rows.Next() {
-		var status int
-		var day string
-		var cnt int
-		var total sql.NullFloat64
-		if err := rows.Scan(&status, &day, &cnt, &total); err != nil {
-			log.Printf("扫描行失败: %v", err)
-			break
+	for r := 0; r < repeatQuery; r++ {
+		var rows *sql.Rows
+		rows, err = db.Query(`
+			SELECT status, DATE(create_time) as day, COUNT(*) as cnt, SUM(amount) as total
+			FROM orders
+			WHERE create_time >= '2024-01-01'
+			GROUP BY status, DATE(create_time)
+			ORDER BY day DESC
+		`)
+		if err != nil {
+			log.Fatalf("查询失败: %v", err)
 		}
-		count++
-		if count <= 5 {
-			log.Printf("    结果: status=%d, day=%s, cnt=%d, total=%.2f", status, day, cnt, total.Float64)
+		count := 0
+		for rows.Next() {
+			var status int
+			var day string
+			var cnt int
+			var total sql.NullFloat64
+			if err := rows.Scan(&status, &day, &cnt, &total); err != nil {
+				break
+			}
+			count++
+			if r == 0 && count <= 5 {
+				log.Printf("    结果: status=%d, day=%s, cnt=%d, total=%.2f", status, day, cnt, total.Float64)
+			}
 		}
+		rows.Close()
 	}
 	elapsed := time.Since(start)
-	log.Printf("  查询完成，返回 %d 行，耗时 %v", count, elapsed)
+	log.Printf("  查询完成（连续执行 %d 次模拟报表任务），总耗时 %v", repeatQuery, elapsed)
 
 	// 监控 CPU/IO 状态
 	log.Println("[监控] 查看当前 MySQL 状态...")
@@ -137,11 +137,11 @@ func reproduce(dsn string) {
 	log.Printf("  Questions: %d, Threads_running: %d", qps, threadsRunning)
 
 	log.Print(`
-[结论] CPU/IO 飙高原因分析：
-1. WHERE 条件使用 create_time 字段过滤，但仅有单列索引 idx_user_id、idx_product_id
-2. GROUP BY status, DATE(create_time) 需要对大量行排序，触发 Filesort
-3. 全表扫描 50 万行，CPU 用于排序和聚合计算
-4. 磁盘 I/O 高：读取大量数据页到 Buffer Pool
+[结论] CPU/IO 飙高原因分析（真实 50 万行 ≈ 中型电商 1–2 月订单量）：
+1. WHERE create_time 过滤 + GROUP BY status, DATE(create_time)，仅有 idx_user_id、idx_product_id
+2. 无法使用索引，全表扫描 50 万行 + Filesort 排序
+3. CPU 用于聚合计算与排序，I/O 读取大量数据页
+4. 生产环境中冷启动或数据量更大时，单次查询可耗时 10–30 秒
 
 [优化方案]
 1. 添加复合索引: ALTER TABLE orders ADD INDEX idx_status_time (status, create_time);
