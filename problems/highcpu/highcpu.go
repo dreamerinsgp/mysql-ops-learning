@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -64,26 +65,22 @@ func reproduce(dsn string) {
 	}
 	log.Println("  表 orders 创建完成（仅有 user_id、product_id 单列索引）")
 
-	// 批量插入 50 万条真实数据（事务内逐行插入，确保数据真实写入）
-	log.Println("[真实数据] 插入 50 万条订单数据（每批 5000 行，约 1–2 分钟）...")
-	const totalRows = 500000
+	// 批量 INSERT（每批 5000 行一条 SQL，远程执行快，约 30–60 秒完成）
+	log.Println("[真实数据] 插入 15 万条订单数据（每批 5000 行，批量 INSERT）...")
+	const totalRows = 150000
 	const batchSize = 5000
+	insertPrefix := "INSERT INTO orders (user_id, product_id, amount, status, create_time) VALUES "
 	for i := 0; i < totalRows; i += batchSize {
-		tx, errTx := db.Begin()
-		if errTx != nil {
-			log.Printf("Begin 失败: %v", errTx)
-			break
-		}
+		vals := make([]string, 0, batchSize)
 		for j := 0; j < batchSize && i+j < totalRows; j++ {
 			n := i + j
-			createTime := time.Now().Add(-time.Duration(n%365) * 24 * time.Hour).Format("2006-01-02 15:04:05")
-			_, _ = tx.Exec(
-				"INSERT INTO orders (user_id, product_id, amount, status, create_time) VALUES (?, ?, ?, ?, ?)",
-				(n%10000)+1, (n%5000)+1, float64(n%1000)+10.0, n%4, createTime,
-			)
+			ct := time.Now().Add(-time.Duration(n%365) * 24 * time.Hour).Format("2006-01-02 15:04:05")
+			vals = append(vals, fmt.Sprintf("(%d,%d,%.2f,%d,'%s')",
+				(n%10000)+1, (n%5000)+1, float64(n%1000)+10.0, n%4, ct))
 		}
-		if errTx := tx.Commit(); errTx != nil {
-			log.Printf("Commit 失败: %v", errTx)
+		_, err = db.Exec(insertPrefix + strings.Join(vals, ","))
+		if err != nil {
+			log.Printf("插入失败: %v", err)
 			break
 		}
 		if (i+batchSize)%50000 == 0 || i+batchSize >= totalRows {
@@ -93,7 +90,7 @@ func reproduce(dsn string) {
 	log.Println("  数据插入完成")
 
 	// 执行需要全表扫描的聚合查询（缺复合索引 → type=ALL + Using filesort）
-	log.Println("[触发问题] 执行报表聚合查询（缺 (status, create_time) 复合索引，全表扫描 50 万行）...")
+	log.Println("[触发问题] 执行报表聚合查询（缺 (status, create_time) 复合索引，全表扫描约 15 万行）...")
 	log.Println("  SQL: SELECT status, DATE(create_time), COUNT(*), SUM(amount) FROM orders WHERE create_time>='2024-01-01' GROUP BY status, DATE(create_time)")
 	const repeatQuery = 3
 	start := time.Now()
@@ -137,11 +134,11 @@ func reproduce(dsn string) {
 	log.Printf("  Questions: %d, Threads_running: %d", qps, threadsRunning)
 
 	log.Print(`
-[结论] CPU/IO 飙高原因分析（真实 50 万行 ≈ 中型电商 1–2 月订单量）：
+[结论] CPU/IO 飙高原因分析（15 万行 ≈ 真实业务数据量，可扩展到百万级观察更明显）：
 1. WHERE create_time 过滤 + GROUP BY status, DATE(create_time)，仅有 idx_user_id、idx_product_id
-2. 无法使用索引，全表扫描 50 万行 + Filesort 排序
+2. 无法使用索引，全表扫描 + Filesort 排序
 3. CPU 用于聚合计算与排序，I/O 读取大量数据页
-4. 生产环境中冷启动或数据量更大时，单次查询可耗时 10–30 秒
+4. 数据量更大（50 万+）或冷启动时，单次查询可耗时 10–30 秒
 
 [优化方案]
 1. 添加复合索引: ALTER TABLE orders ADD INDEX idx_status_time (status, create_time);
